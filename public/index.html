@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>S3 Image Hub</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script>
+    // 提前应用主题，避免页面闪烁（FOUC）
+    (function () {
+      try {
+        var stored = localStorage.getItem('s3hub_theme');
+        var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        var root = document.documentElement;
+        root.classList.remove('dark', 'light');
+        root.classList.add(theme);
+      } catch (e) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+  <script src="/js/vue.global.prod.js"></script>
+  <script src="/js/naive-ui.dist.js"></script>
+  <script src="/js/i18n.js"></script>
+  <style>
+    [v-cloak] { display: none !important; }
+    .app-loading {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: var(--bg-primary); gap: 1.2rem;
+      transition: background-color 0.3s ease;
+    }
+    .app-loading .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .app-loading span {
+      font-family: 'Manrope', sans-serif;
+      font-size: 0.85rem; color: var(--text-muted);
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <!-- Loading before Vue mounts -->
+  <div class="app-loading" id="app-loading">
+    <div class="spinner"></div>
+    <span>Loading...</span>
+  </div>
+
+  <div id="app" v-cloak>
+    <n-config-provider :theme="appTheme" :theme-overrides="themeOverrides">
+      <!-- Login -->
+      <div v-if="!booting && route !== '#/home'" class="auth-wrapper">
+        <div class="auth-card">
+          <div class="auth-logo">
+            <div class="logo-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            </div>
+            <h1>S3 Image <em>Hub</em></h1>
+          </div>
+          <h2 class="auth-title">{{ lang.loginTitle }}</h2>
+          <p class="auth-subtitle">{{ lang.loginSubtitle }}</p>
+          <n-form @submit.prevent="handleLogin">
+            <div class="form-group">
+              <label>{{ lang.username }}</label>
+              <n-input v-model:value="loginForm.username" :placeholder="lang.username" autocomplete="username" @keyup.enter="handleLogin" />
+            </div>
+            <div class="form-group">
+              <label>{{ lang.password }}</label>
+              <n-input v-model:value="loginForm.password" type="password" show-password-on="click" :placeholder="lang.password" autocomplete="current-password" @keyup.enter="handleLogin" />
+            </div>
+            <div class="form-error">{{ loginError }}</div>
+            <n-button type="primary" block :loading="loginLoading" @click="handleLogin">{{ lang.login }}</n-button>
+          </n-form>
+          <div style="margin-top:1.5rem;text-align:center;display:flex;gap:0.5rem;justify-content:center">
+            <n-button quaternary circle size="small" class="theme-toggle" @click="toggleTheme" :title="lang.themeToggle">
+              <template #icon>
+                <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+              </template>
+            </n-button>
+            <n-button quaternary circle size="small" class="lang-toggle" @click="toggleLang">{{ lang.langSwitch }}</n-button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Home -->
+      <template v-if="!booting && route === '#/home'">
+        <header class="header">
+          <div class="header-inner">
+            <div class="logo">
+              <div class="logo-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+              </div>
+              <h1>S3 Image <em>Hub</em></h1>
+            </div>
+            <div class="header-actions">
+              <n-button quaternary circle size="small" class="theme-toggle" @click="toggleTheme" :title="lang.themeToggle">
+                <template #icon>
+                  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                </template>
+              </n-button>
+              <n-button quaternary circle size="small" class="lang-toggle" @click="toggleLang">{{ lang.langSwitch }}</n-button>
+              <n-button v-if="isAdmin" @click="openUsers">
+                <template #icon>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </template>
+                {{ lang.users }}
+              </n-button>
+              <n-button v-if="isAdmin" :loading="syncing" @click="syncFromS3">
+                <template #icon>
+                  <svg v-if="!syncing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                </template>
+                {{ syncing ? lang.syncing : lang.sync }}
+              </n-button>
+              <n-dropdown trigger="hover" :options="userMenuOptions" placement="bottom-end" @select="onUserMenuSelect">
+                <span class="user-badge">
+                  <svg class="user-badge-avatar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  <span class="user-badge-name">{{ user?.username }}</span>
+                  <svg class="user-badge-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </span>
+              </n-dropdown>
+            </div>
+          </div>
+        </header>
+
+        <main class="main">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box">
+                <n-input v-model:value="searchQuery" :placeholder="lang.search" clearable @update:value="onSearch">
+                  <template #prefix>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;color:var(--text-muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  </template>
+                </n-input>
+              </div>
+              <n-button type="primary" @click="openUpload">
+                <template #icon>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </template>
+                {{ lang.upload }}
+              </n-button>
+              <div class="stat"><span>{{ pagination.total }}</span> {{ lang.images }}</div>
+            </div>
+          </div>
+
+          <div class="gallery" v-if="images.length">
+            <div class="card" v-for="img in images" :key="img._id" @click="openDetail(img._id)">
+              <div class="card-thumb">
+                <img :src="'/static/' + img.md5" :alt="img.originalName" loading="lazy">
+                <div class="card-overlay">
+                  <div class="card-overlay-actions">
+                    <n-button circle quaternary class="overlay-btn" @click.stop="copyQuickUrl(img.md5)" :title="lang.copyUrl">
+                      <template #icon>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                      </template>
+                    </n-button>
+                    <n-button v-if="isAdmin" circle quaternary class="overlay-btn" @click.stop="deleteImage(img._id)" :title="lang.delete">
+                      <template #icon>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      </template>
+                    </n-button>
+                  </div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-name" :title="img.originalName">{{ img.originalName }}</div>
+                <div class="card-meta">
+                  <span class="card-md5" :title="img.md5">{{ img.md5 }}</span>
+                  <span>{{ formatSize(img.size) }}</span>
+                </div>
+                <div v-if="img.uploadedByName" class="card-uploader">{{ lang.uploadedBy }}: {{ img.uploadedByName }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="empty-state" v-else>
+            <n-empty>
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:48px;height:48px;color:var(--text-muted)"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+              </template>
+              <div>
+                <h3>{{ lang.noImages }}</h3>
+                <p>{{ lang.noImagesHint }}</p>
+              </div>
+            </n-empty>
+          </div>
+
+          <div class="pagination" v-if="pagination.pages > 1">
+            <n-pagination :page="pagination.page" :page-count="pagination.pages" :on-update:page="loadImages" />
+          </div>
+        </main>
+      </template>
+
+      <!-- Upload Modal -->
+      <n-modal v-model:show="uploadOpen">
+        <div class="modal" style="max-width:520px">
+          <div class="modal-header">
+            <h2>{{ lang.uploadTitle }}</h2>
+            <n-button quaternary circle @click="uploadOpen = false">
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </template>
+            </n-button>
+          </div>
+          <div class="modal-body">
+            <n-upload :default-upload="false" :show-file-list="false" accept="image/*" multiple :max="-1" @change="onUploadChange">
+              <n-upload-dragger class="upload-zone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:40px;height:40px;color:var(--text-muted);margin-bottom:1rem"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <h3>{{ lang.dropHint }}</h3>
+                <p>{{ lang.dropFormats }}</p>
+              </n-upload-dragger>
+            </n-upload>
+            <div class="upload-progress" :class="{ active: uploading }">
+              <n-progress :percentage="uploadPct" :show-indicator="false" :height="3" />
+              <div class="progress-text">{{ lang.uploading }} {{ uploadPct }}%</div>
+            </div>
+            <div style="margin-top:1rem">
+              <div v-for="name in uploadList" :key="name" style="font-size:0.78rem;color:var(--text-secondary);padding:0.2rem 0;font-family:var(--font-mono)">{{ name }}</div>
+            </div>
+          </div>
+        </div>
+      </n-modal>
+
+      <!-- Detail Modal -->
+      <n-modal v-model:show="detailOpen">
+        <div class="modal">
+          <div class="modal-header">
+            <h2>{{ detailImage?.originalName || lang.imageDetail }}</h2>
+            <n-button quaternary circle @click="detailOpen = false">
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </template>
+            </n-button>
+          </div>
+          <div class="modal-body" v-if="detailImage">
+            <img class="modal-body-image" :src="'/static/' + detailImage.md5" :alt="detailImage.originalName">
+            <div class="detail-grid">
+              <div class="detail-item"><label>{{ lang.originalName }}</label><div class="value">{{ detailImage.originalName }}</div></div>
+              <div class="detail-item"><label>{{ lang.filename }}</label><div class="value mono">{{ detailImage.filename }}</div></div>
+              <div class="detail-item"><label>{{ lang.md5Hash }}</label><div class="value mono">{{ detailImage.md5 }}</div></div>
+              <div class="detail-item"><label>{{ lang.mimeType }}</label><div class="value mono">{{ detailImage.mimeType }}</div></div>
+              <div class="detail-item"><label>{{ lang.size }}</label><div class="value">{{ formatSize(detailImage.size) }}</div></div>
+              <div class="detail-item"><label>{{ lang.s3Key }}</label><div class="value mono">{{ detailImage.s3Key }}</div></div>
+              <div class="detail-item"><label>{{ lang.createdAt }}</label><div class="value">{{ new Date(detailImage.createdAt).toLocaleString() }}</div></div>
+              <div class="detail-item"><label>{{ lang.uploadedBy }}</label><div class="value">{{ detailImage.uploadedByName || lang.none }}</div></div>
+              <div class="detail-item"><label>{{ lang.tags }}</label><div class="value">{{ detailImage.tags?.length ? detailImage.tags.join(', ') : lang.none }}</div></div>
+            </div>
+            <div class="url-copy-box">
+              <n-input :value="detailStaticUrl" readonly />
+              <n-button type="primary" @click="copyStaticUrl">{{ lang.copyUrl }}</n-button>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <n-button v-if="isAdmin" type="error" ghost :loading="deleting" @click="deleteImage(detailImage?._id)">
+              <template #icon v-if="!deleting">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </template>
+              {{ deleting ? '...' : lang.delete }}
+            </n-button>
+            <n-button @click="detailOpen = false">{{ lang.close }}</n-button>
+          </div>
+        </div>
+      </n-modal>
+
+      <!-- Users Modal -->
+      <n-modal v-model:show="usersOpen">
+        <div class="modal" style="max-width:640px">
+          <div class="modal-header">
+            <h2>{{ lang.users }}</h2>
+            <n-button quaternary circle @click="usersOpen = false">
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </template>
+            </n-button>
+          </div>
+          <div class="modal-body">
+            <n-form inline class="create-user-form" @submit.prevent="createUser">
+              <n-form-item :show-label="false">
+                <n-input v-model:value="newUser.username" :placeholder="lang.username" />
+              </n-form-item>
+              <n-form-item :show-label="false">
+                <n-input v-model:value="newUser.password" type="password" show-password-on="click" :placeholder="lang.password" />
+              </n-form-item>
+              <n-form-item :show-label="false">
+                <n-select v-model:value="newUser.role" :options="roleOptions" style="width:100px" />
+              </n-form-item>
+              <n-form-item :show-label="false">
+                <n-button type="primary" :loading="creatingUser" attr-type="submit" @click="createUser">{{ lang.createUser }}</n-button>
+              </n-form-item>
+            </n-form>
+            <div style="margin-top:1rem">
+              <div v-if="loadingUsers" style="text-align:center;padding:1rem;color:var(--text-muted)">Loading...</div>
+              <div class="user-row" v-for="u in usersList" :key="u._id">
+                <div class="user-row-info">
+                  <span class="user-row-name">{{ u.username }}</span>
+                  <n-tag size="small" :bordered="false" type="warning">{{ u.role === 'admin' ? lang.admin : lang.user }}</n-tag>
+                  <span class="user-row-date">{{ new Date(u.createdAt).toLocaleDateString() }}</span>
+                </div>
+                <div class="user-row-actions">
+                  <n-button size="small" @click="openReset(u._id)">{{ lang.resetPassword }}</n-button>
+                  <n-button v-if="u.role !== 'admin'" size="small" type="error" ghost :loading="deletingUser" @click="deleteUser(u._id, u.username)">{{ lang.deleteUser }}</n-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </n-modal>
+
+      <!-- Reset Password Modal -->
+      <n-modal v-model:show="resetModalOpen">
+        <div class="modal" style="max-width:400px">
+          <div class="modal-header">
+            <h2>{{ lang.resetPassword }}</h2>
+            <n-button quaternary circle @click="resetModalOpen = false">
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </template>
+            </n-button>
+          </div>
+          <div class="modal-body">
+            <n-form @submit.prevent="doResetPassword">
+              <div class="form-group">
+                <label>{{ lang.newPassword }}</label>
+                <n-input v-model:value="resetPass" type="password" show-password-on="click" :placeholder="lang.newPassword" />
+              </div>
+              <n-button type="primary" block :loading="resettingPassword" attr-type="submit" @click="doResetPassword">{{ resettingPassword ? '...' : lang.confirm }}</n-button>
+            </n-form>
+          </div>
+        </div>
+      </n-modal>
+    </n-config-provider>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
