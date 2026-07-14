@@ -258,13 +258,20 @@ createApp({
     // ─── Router ───
     let autoLoginDone = false;
 
-    function navigate(hash) { location.hash = hash; }
+    function navigate(hash) {
+      const h = hash || '#/login';
+      // 路由守卫：未登录不能访问 home，已登录不能停留在 login
+      if (h === '#/home' && !token.value) { location.hash = '#/login'; route.value = '#/login'; return; }
+      if (h === '#/login' && token.value) { location.hash = '#/home'; route.value = '#/home'; return; }
+      location.hash = h;
+      route.value = h;
+    }
 
     function onHashChange() {
       if (!autoLoginDone) return;
       const h = location.hash || '#/login';
-      if (h === '#/home' && !token.value) { navigate('#/login'); return; }
-      if (h === '#/login' && token.value) { navigate('#/home'); return; }
+      if (h === '#/home' && !token.value) { location.hash = '#/login'; route.value = '#/login'; return; }
+      if (h === '#/login' && token.value) { location.hash = '#/home'; route.value = '#/home'; return; }
       route.value = h;
     }
 
