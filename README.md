@@ -37,7 +37,7 @@
 ### 通过 GitHub 拉取仓库
 
 ```bash
-git clone https://github.com/your-username/s3-image-hub.git
+git clone https://github.com/hreign/s3-image-hub
 cd s3-image-hub
 ```
 
