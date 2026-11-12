@@ -26,6 +26,9 @@ Desktop.ini
 *.swo
 *~
 .zcode
+.codeartsdoer
+.opencode
+.codex
 
 # Build output
 dist/
